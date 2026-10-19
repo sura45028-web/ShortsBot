@@ -19,7 +19,7 @@ class ShortsScrollService : AccessibilityService() {
     private var steps: List<Int> = emptyList()
     private var pos = 0
     private var total = -1
-    private var swipeMs = 60L
+    private var swipeMs = 250L
     private var pauseMs = 0L
     private var running = false
     private var currentPkg = ""
@@ -30,11 +30,13 @@ class ShortsScrollService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            currentPkg = event.packageName?.toString() ?: ""
+            val pkg = event.packageName?.toString()
+            if (!pkg.isNullOrEmpty()) currentPkg = pkg
         }
     }
 
-    override fun onInterrupt() = stop()
+    // Не останавливаем сценарий: система прерывает службу сама, в том числе во время жестов
+    override fun onInterrupt() {}
 
     override fun onDestroy() {
         stop()
@@ -50,7 +52,7 @@ class ShortsScrollService : AccessibilityService() {
         steps = expanded
         total = if (cycles <= 0) -1 else cycles * expanded.size
         this.pauseMs = pauseMs.coerceAtLeast(0L)
-        this.swipeMs = swipeMs.coerceAtLeast(20L)
+        this.swipeMs = swipeMs.coerceAtLeast(50L)
         pos = 0
         running = true
         handler.removeCallbacks(tick)
@@ -62,6 +64,11 @@ class ShortsScrollService : AccessibilityService() {
         handler.removeCallbacks(tick)
     }
 
+    private fun isYouTubeOnTop(): Boolean {
+        val pkg = rootInActiveWindow?.packageName?.toString() ?: currentPkg
+        return pkg == YOUTUBE_PKG
+    }
+
     private val tick: Runnable = object : Runnable {
         override fun run() {
             if (!running) return
@@ -69,33 +76,35 @@ class ShortsScrollService : AccessibilityService() {
                 stop()
                 return
             }
-            // Свайпаем только в YouTube, иначе ждём
-            if (currentPkg != YOUTUBE_PKG) {
+            if (!isYouTubeOnTop()) {
                 handler.postDelayed(this, 500)
                 return
             }
             val dir = steps[pos % steps.size]
-            pos++
-            swipe(dir)
+            val sent = swipe(dir)
+            // Если система не приняла жест, повторим тот же шаг, а не пропустим его
+            if (sent) pos++
             handler.postDelayed(this, swipeMs + pauseMs)
         }
     }
 
-    private fun swipe(direction: Int) {
+    private fun swipe(direction: Int): Boolean {
         val dm = resources.displayMetrics
         val x = dm.widthPixels / 2f
         val h = dm.heightPixels.toFloat()
 
         // direction > 0: палец снизу вверх -> следующий шортс
         // direction < 0: палец сверху вниз -> предыдущий шортс
-        val (y1, y2) = if (direction > 0) h * 0.8f to h * 0.2f
-                       else h * 0.2f to h * 0.8f
+        val far = h * 0.75f
+        val near = h * 0.25f
+        val (y1, y2) = if (direction > 0) far to near else near to far
 
         val path = Path().apply {
             moveTo(x, y1)
             lineTo(x, y2)
         }
         val stroke = GestureDescription.StrokeDescription(path, 0, swipeMs)
-        dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        return dispatchGesture(gesture, null, null)
     }
 }
