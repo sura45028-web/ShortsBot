@@ -6,6 +6,7 @@ import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityWindowInfo
 import kotlin.math.abs
 
 class ShortsScrollService : AccessibilityService() {
@@ -29,10 +30,8 @@ class ShortsScrollService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val pkg = event.packageName?.toString()
-            if (!pkg.isNullOrEmpty()) currentPkg = pkg
-        }
+        val pkg = event.packageName?.toString()
+        if (!pkg.isNullOrEmpty()) currentPkg = pkg
     }
 
     // Не останавливаем сценарий: система прерывает службу сама, в том числе во время жестов
@@ -64,8 +63,20 @@ class ShortsScrollService : AccessibilityService() {
         handler.removeCallbacks(tick)
     }
 
+    // Определяем приложение, которое реально открыто на экране прямо сейчас
+    private fun foregroundPackage(): String? {
+        val appWindow = windows?.firstOrNull {
+            it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive
+        }
+        val root = appWindow?.root ?: rootInActiveWindow
+        val pkg = root?.packageName?.toString()
+        @Suppress("DEPRECATION")
+        root?.recycle()
+        return pkg
+    }
+
     private fun isYouTubeOnTop(): Boolean {
-        val pkg = rootInActiveWindow?.packageName?.toString() ?: currentPkg
+        val pkg = foregroundPackage() ?: currentPkg
         return pkg == YOUTUBE_PKG
     }
 
@@ -76,6 +87,7 @@ class ShortsScrollService : AccessibilityService() {
                 stop()
                 return
             }
+            // Если YouTube не на экране, проверяем снова через 0.5 сек и продолжаем сами
             if (!isYouTubeOnTop()) {
                 handler.postDelayed(this, 500)
                 return
